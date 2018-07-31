@@ -1,32 +1,6 @@
-#include "TMemFile.h"
-#include "TH1.h"
-
 #include <iostream>
 #include <algorithm>
 #include <random>
-
-#include "TMessage.h"
-#include "TBenchmark.h"
-#include "TSocket.h"
-#include "TH2.h"
-#include "TTree.h"
-#include "TMemFile.h"
-#include "TRandom.h"
-#include "TError.h"
-#include "TFileMerger.h"
-
-#include "TServerSocket.h"
-#include "TPad.h"
-#include "TCanvas.h"
-#include "TMonitor.h"
-
-#include "TFileCacheWrite.h"
-#include "TSystem.h"
-#include "THashTable.h"
-
-#include "TMath.h"
-#include "TTimeStamp.h"
-#include "TKey.h"
 
 #include "wys.hxx"
 #include "masterio.hxx"
@@ -60,13 +34,15 @@ int main(int argc, char** argv) {
     MPI_Type_commit(&buffersizes_type);
 
     if ( id == 0 ) {
+        bool cache = false;
         string msg  = "I'm the master IO process: ";
         msg += to_string(getpid());
         yunsong::DEBUG_MSG(msg);
 
         THashTable mergers;
-
         MasterIO master_io(1);
+
+        int clientId = 0;
 
         yunsong::DEBUG_MSG("MasterIO Ready to receive data...");
         // Loop to collect data from all ipcwriters
@@ -87,43 +63,61 @@ int main(int argc, char** argv) {
                 master_io.setMasterIOStatus(MasterIOStatus::LOCKED);
                 master_io.setNumIncrement();
         
-                char *name = new char[sizes.name_length];
-                char *data = new char[sizes.data_length];
+                char *name = new char[sizes.name_length+1];
+                char *data = new char[sizes.data_length+1];
                 MPI_Recv(name, sizes.name_length, MPI_CHAR, recv_status.MPI_SOURCE, TAG_DATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
                 MPI_Recv(data, sizes.data_length, MPI_CHAR, recv_status.MPI_SOURCE, TAG_DATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                
-                int num_files = 0;
-                yunsong::DEBUG_MSG("filename & data received, reconstructing TMemFile...");
+                name[sizes.name_length] = '\0';
+                data[sizes.data_length] = '\0';
 
-                TMemFile *transient = new TMemFile(name, data, sizes.data_length, "UPDATE");
+                TString filename(name);
 
-                ParallelFileMerger *info = (ParallelFileMerger*)mergers.FindObject(name);
+                TMemFile *transient = new TMemFile(filename,data,sizes.data_length+1,"UPDATE"); // UPDATE because we need to remove the TTree after merging them.
+             
+                TH1D *h = (TH1D *)transient->Get("name");
+                for (int i = 1; i <= 20; i++)
+                    cout << h->GetBinContent(i) << "\t";
+                cout << endl;
+
+                const Float_t clientThreshold = 0.75; // control how often the histogram are merged.  Here as soon as half the clients have reported.
+
+                ParallelFileMerger *info = (ParallelFileMerger*)mergers.FindObject(filename);
                 if (!info) {
-                    info = new ParallelFileMerger(name,false);
+                    info = new ParallelFileMerger(filename,cache);
                     mergers.Add(info);
-                }         
-                if (R__NeedInitialMerge(transient))
+                }
+
+                if (R__NeedInitialMerge(transient)) {
                     info->InitialMerge(transient);
-                num_files++;
-                if (num_files >= MAX_FILES) {
+                }
+                yunsong::DEBUG_MSG("after initialmerge");
+                info->RegisterClient(clientId,transient);
+                yunsong::DEBUG_MSG("registerclient");
+                if (info->NeedMerge(clientThreshold)) {
+                    // Enough clients reported.
+                    Info("fastMergeServerHist","Merging input from %ld clients (%d)",info->fClients.size(),clientId);
                     info->Merge();
-                    num_files = 0;
                 }
                 transient = 0;
+                ++clientId;
 
-                master_io.setMasterIOStatus(MasterIOStatus::UNLOCKED);
-            }
-            usleep(100);
-        }   // end while
-        TIter next(&mergers);
-        ParallelFileMerger *info;
-        while ( (info = (ParallelFileMerger*)next()) ) {
-            if (info->NeedFinalMerge())
-                info->Merge();
-        }
+                delete name;
+                delete data;
+          }
+
+       }    // while
+
+       TIter next(&mergers);
+       ParallelFileMerger *info;
+       while ( (info = (ParallelFileMerger*)next()) ) {
+          if (info->NeedFinalMerge())
+          {
+             info->Merge();
+          }
+       }
+       mergers.Delete();
     }   // rank 0
     else {
-        bool cache = false;
        // Open a server socket looking for connections on a named service or
        // on a specified port.
        //TServerSocket *ss = new TServerSocket("rootserv", kTRUE);
@@ -150,8 +144,8 @@ int main(int argc, char** argv) {
 
        printf("fastMergeServerHist ready to accept connections\n");
        while (1) {
-          TMessage *mess;
-          TSocket  *s;
+           TMessage *mess;
+           TSocket  *s;
 
           // NOTE: this needs to be update to handle the case where the client
           // dies.
@@ -209,36 +203,44 @@ int main(int argc, char** argv) {
              msg = "length: ";
              msg += to_string(length);
              yunsong::DEBUG_MSG(msg);
-
-             // Info("fastMergeServerHist","Received input from client %d for %s",clientId,filename.Data());
-
-             TMemFile *transient = new TMemFile(filename,mess->Buffer() + mess->Length(),length,"UPDATE"); // UPDATE because we need to remove the TTree after merging them.
              
-             TH1D *h = (TH1D *)transient->Get("name");
-             for (int i = 1; i <= 20; i++)
-                 cout << h->GetBinContent(i) << "\t";
-             cout << endl;
+             BufferSizes sizes;
+             sizes.name_length = filename.Length();
+             sizes.data_length = length;
+
+             msg = "filename length: ";
+             msg += to_string(sizes.name_length);
+             yunsong::DEBUG_MSG(msg);
+             
+             MPI_Send(&sizes, 1, buffersizes_type, 0, TAG_REQUEST, MPI_COMM_WORLD);
+             MasterIOStatus master_io_stat;
+             MPI_Recv(&master_io_stat, 1, masterstat_type, 0, TAG_FEEDBACK, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+             msg = "Receive master IO status: ";
+             if ( master_io_stat == MasterIOStatus::UNLOCKED)
+                 msg += " UNLOCKED";
+             else
+                 msg += "LOCKED";
+             yunsong::DEBUG_MSG(msg);
+             
+             while(master_io_stat != MasterIOStatus::UNLOCKED){
+                 usleep(10);
+                 MPI_Send(&sizes, 1, buffersizes_type, 0, TAG_REQUEST, MPI_COMM_WORLD);
+                 yunsong::DEBUG_MSG("Waiting for status...");
+                 MPI_Recv(&master_io_stat, 1, masterstat_type, 0, TAG_FEEDBACK, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                 msg = "Receive master IO status: ";
+                 if (master_io_stat == MasterIOStatus::UNLOCKED)
+                     msg += " UNLOCKED";
+                 else
+                     msg += "LOCKED";
+                 yunsong::DEBUG_MSG(msg);
+             }
+             char *data_buffer = mess->Buffer() + mess->Length();
+             MPI_Send(filename.Data(), sizes.name_length, MPI_CHAR, 0, TAG_DATA, MPI_COMM_WORLD);
+             MPI_Send(data_buffer, sizes.data_length, MPI_CHAR, 0, TAG_DATA, MPI_COMM_WORLD);
 
              mess->SetBufferOffset(mess->Length()+length);
-
-             const Float_t clientThreshold = 0.75; // control how often the histogram are merged.  Here as soon as half the clients have reported.
-
-             ParallelFileMerger *info = (ParallelFileMerger*)mergers.FindObject(filename);
-             if (!info) {
-                info = new ParallelFileMerger(filename,cache);
-                mergers.Add(info);
-             }
-
-             if (R__NeedInitialMerge(transient)) {
-                info->InitialMerge(transient);
-             }
-             info->RegisterClient(clientId,transient);
-             if (info->NeedMerge(clientThreshold)) {
-                // Enough clients reported.
-                Info("fastMergeServerHist","Merging input from %ld clients (%d)",info->fClients.size(),clientId);
-                info->Merge();
-             }
-             transient = 0;
+             data_buffer = 0;
+             sleep(5);
           } else if (mess->What() == kMESS_OBJECT) {
              printf("got object of class: %s\n", mess->GetClass()->GetName());
           } else {
@@ -246,18 +248,7 @@ int main(int argc, char** argv) {
           }
 
           delete mess;
-       }
-
-       TIter next(&mergers);
-       ParallelFileMerger *info;
-       while ( (info = (ParallelFileMerger*)next()) ) {
-          if (info->NeedFinalMerge())
-          {
-             info->Merge();
-          }
-       }
-
-       mergers.Delete();
+       }    //while
        delete mon;
        delete ss;
     }   // other ranks

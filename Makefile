@@ -6,4 +6,4 @@ socket_s: socket_s.cxx ../wys.hxx ParallelFileMerger.hxx
 	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -o socket_s socket_s.cxx ParallelFileMerger_hxx.so
 
 clean:
-	rm -f socket_s *.log ParallelFileMerger_hxx*
+	rm -f socket_s *.log ParallelFileMerger_hxx* toto.*

@@ -28,6 +28,8 @@ const int kReplaceImmediately = 1;
 const int kReplaceWait = 2;
 
 #include "TKey.h"
+#include "TROOT.h"
+
 static Bool_t R__NeedInitialMerge(TDirectory *dir)
 {
 
@@ -188,6 +190,7 @@ struct ParallelFileMerger : public TObject
       {
          delete iter->fFile;
       }
+      ROOT::CallRecursiveRemoveIfNeeded(*this);
    }
 
    ULong_t  Hash() const
@@ -301,127 +304,3 @@ struct ParallelFileMerger : public TObject
 };
 
 #endif
-/*
-void parallelMergeServer(bool cache = false) {
-   // Open a server socket looking for connections on a named service or
-   // on a specified port.
-   //TServerSocket *ss = new TServerSocket("rootserv", kTRUE);
-   TServerSocket *ss = new TServerSocket(1095, kTRUE, 100);
-   if (!ss->IsValid()) {
-      return;
-   }
-
-   TMonitor *mon = new TMonitor;
-
-   mon->Add(ss);
-
-   UInt_t clientCount = 0;
-   UInt_t clientIndex = 0;
-
-   THashTable mergers;
-
-   enum StatusKind {
-      kStartConnection = 0,
-      kProtocol = 1,
-
-      kProtocolVersion = 1
-   };
-
-   printf("fastMergeServerHist ready to accept connections\n");
-   while (1) {
-      TMessage *mess;
-      TSocket  *s;
-
-      // NOTE: this needs to be update to handle the case where the client
-      // dies.
-      s = mon->Select();
-
-      if (s->IsA() == TServerSocket::Class()) {
-         if (clientCount > 100) {
-            printf("only accept 100 clients connections\n");
-            mon->Remove(ss);
-            ss->Close();
-         } else {
-            TSocket *client = ((TServerSocket *)s)->Accept();
-            client->Send(clientIndex, kStartConnection);
-            client->Send(kProtocolVersion, kProtocol);
-            ++clientCount;
-            ++clientIndex;
-            mon->Add(client);
-            printf("Accept %d connections\n",clientCount);
-         }
-         continue;
-      }
-
-      s->Recv(mess);
-
-      if (mess==0) {
-         Error("fastMergeServer","The client did not send a message\n");
-      } else if (mess->What() == kMESS_STRING) {
-         char str[64];
-         mess->ReadString(str, 64);
-         printf("Client %d: %s\n", clientCount, str);
-         mon->Remove(s);
-         printf("Client %d: bytes recv = %d, bytes sent = %d\n", clientCount, s->GetBytesRecv(),
-                s->GetBytesSent());
-         s->Close();
-         --clientCount;
-         if (mon->GetActive() == 0 || clientCount == 0) {
-            printf("No more active clients... stopping\n");
-            break;
-         }
-      } else if (mess->What() == kMESS_ANY) {
-
-         Long64_t length;
-         TString filename;
-         Int_t clientId;
-         mess->ReadInt(clientId);
-         mess->ReadTString(filename);
-         mess->ReadLong64(length); // '*mess >> length;' is broken in CINT for Long64_t.
-
-         // Info("fastMergeServerHist","Received input from client %d for %s",clientId,filename.Data());
-
-         TMemFile *transient = new TMemFile(filename,mess->Buffer() + mess->Length(),length,"UPDATE"); // UPDATE because we need to remove the TTree after merging them.
-         mess->SetBufferOffset(mess->Length()+length);
-
-         const Float_t clientThreshold = 0.75; // control how often the histogram are merged.  Here as soon as half the clients have reported.
-
-         ParallelFileMerger *info = (ParallelFileMerger*)mergers.FindObject(filename);
-         if (!info) {
-            info = new ParallelFileMerger(filename,cache);
-            mergers.Add(info);
-         }
-
-         if (R__NeedInitialMerge(transient)) {
-            info->InitialMerge(transient);
-         }
-         info->RegisterClient(clientId,transient);
-         if (info->NeedMerge(clientThreshold)) {
-            // Enough clients reported.
-            Info("fastMergeServerHist","Merging input from %ld clients (%d)",info->fClients.size(),clientId);
-            info->Merge();
-         }
-         transient = 0;
-      } else if (mess->What() == kMESS_OBJECT) {
-         printf("got object of class: %s\n", mess->GetClass()->GetName());
-      } else {
-         printf("*** Unexpected message ***\n");
-      }
-
-      delete mess;
-   }
-
-   TIter next(&mergers);
-   ParallelFileMerger *info;
-   while ( (info = (ParallelFileMerger*)next()) ) {
-      if (info->NeedFinalMerge())
-      {
-         info->Merge();
-      }
-   }
-
-   mergers.Delete();
-   delete mon;
-   delete ss;
-}
-*/
