@@ -1,4 +1,3 @@
-# Use the following command to generate the dictionary :
-# root>.L OutputData.cxx+
-# then source this env.sh
+#source this env.sh
+root -b -q ParallelFileMerger.hxx+
 export LD_LIBRARY_PATH=.:$LD_LIBRARY_PATH

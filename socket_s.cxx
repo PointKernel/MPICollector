@@ -79,42 +79,23 @@ int main(int argc, char** argv) {
                     cout << h->GetBinContent(i) << "\t";
                 cout << endl;
 
-                const Float_t clientThreshold = 0.75; // control how often the histogram are merged.  Here as soon as half the clients have reported.
-
                 ParallelFileMerger *info = (ParallelFileMerger*)mergers.FindObject(filename);
                 if (!info) {
                     info = new ParallelFileMerger(filename,cache);
                     mergers.Add(info);
                 }
 
-                if (R__NeedInitialMerge(transient)) {
-                    info->InitialMerge(transient);
-                }
-                yunsong::DEBUG_MSG("after initialmerge");
+                info->InitialMerge(transient);
                 info->RegisterClient(clientId,transient);
-                yunsong::DEBUG_MSG("registerclient");
-                if (info->NeedMerge(clientThreshold)) {
-                    // Enough clients reported.
-                    Info("fastMergeServerHist","Merging input from %ld clients (%d)",info->fClients.size(),clientId);
-                    info->Merge();
-                }
+                Info("fastMergeServerHist","Merging input from %ld clients (%d)",info->fClients.size(),clientId);
+                info->Merge();
                 transient = 0;
                 ++clientId;
 
                 delete name;
                 delete data;
           }
-
        }    // while
-
-       TIter next(&mergers);
-       ParallelFileMerger *info;
-       while ( (info = (ParallelFileMerger*)next()) ) {
-          if (info->NeedFinalMerge())
-          {
-             info->Merge();
-          }
-       }
        mergers.Delete();
     }   // rank 0
     else {
@@ -169,6 +150,7 @@ int main(int argc, char** argv) {
           }
 
           s->Recv(mess);
+        printf("message received\n");
 
           if (mess==0) {
              Error("fastMergeServer","The client did not send a message\n");
@@ -181,7 +163,7 @@ int main(int argc, char** argv) {
                     s->GetBytesSent());
              s->Close();
              --clientCount;
-             if (mon->GetActive() == 0 || clientCount == 0) {
+             if (mon->GetActive() == 0 && clientCount == 0) {
                 printf("No more active clients... stopping\n");
                 break;
              }
@@ -237,10 +219,10 @@ int main(int argc, char** argv) {
              char *data_buffer = mess->Buffer() + mess->Length();
              MPI_Send(filename.Data(), sizes.name_length, MPI_CHAR, 0, TAG_DATA, MPI_COMM_WORLD);
              MPI_Send(data_buffer, sizes.data_length, MPI_CHAR, 0, TAG_DATA, MPI_COMM_WORLD);
+             yunsong::DEBUG_MSG("********* DATA SENT *********");
 
              mess->SetBufferOffset(mess->Length()+length);
              data_buffer = 0;
-             sleep(5);
           } else if (mess->What() == kMESS_OBJECT) {
              printf("got object of class: %s\n", mess->GetClass()->GetName());
           } else {
