@@ -12,7 +12,8 @@ const int TAG_DATA = 97;
 const int TAG_REQUEST = 98;
 const int TAG_FEEDBACK = 99;
 
-const int MAX_FILES = 10;
+const int EVENTS_PER_NODE = 1;
+const int MAX_TOTAL = 60;
 
 using namespace std;
 
@@ -111,8 +112,8 @@ int main(int argc, char** argv) {
 
        mon->Add(ss);
 
-       UInt_t clientCount = 0;
-       UInt_t clientIndex = 0;
+       UInt_t eventCount = 0;
+       UInt_t eventIndex = 0;
 
        THashTable mergers;
 
@@ -123,7 +124,7 @@ int main(int argc, char** argv) {
           kProtocolVersion = 1
        };
 
-       printf("fastMergeServerHist ready to accept connections\n");
+       printf("ParallelMergeServer ready to accept connections\n");
        while (1) {
            TMessage *mess;
            TSocket  *s;
@@ -133,71 +134,53 @@ int main(int argc, char** argv) {
           s = mon->Select();
 
           if (s->IsA() == TServerSocket::Class()) {
-             if (clientCount > 100) {
-                printf("only accept 100 clients connections\n");
-                mon->Remove(ss);
-                ss->Close();
+             if (eventCount >= EVENTS_PER_NODE) {
+                 Info("ParallelMergeServer","Only accept %d events per node", EVENTS_PER_NODE);
+                 mon->Remove(ss);
+                 ss->Close();
              } else {
                 TSocket *client = ((TServerSocket *)s)->Accept();
-                client->Send(clientIndex, kStartConnection);
+                client->Send(eventIndex, kStartConnection);
                 client->Send(kProtocolVersion, kProtocol);
-                ++clientCount;
-                ++clientIndex;
+                ++eventIndex;
                 mon->Add(client);
-                printf("Accept %d connections\n",clientCount);
+                printf("######### Accept event %d #########\n",eventCount);
              }
              continue;
           }
 
           s->Recv(mess);
-        printf("message received\n");
 
           if (mess==0) {
-             Error("fastMergeServer","The client did not send a message\n");
+             Error("ParallelMergeServer","The client did not send a message\n");
           } else if (mess->What() == kMESS_STRING) {
              char str[64];
              mess->ReadString(str, 64);
-             printf("Client %d: %s\n", clientCount, str);
+             printf("Event %d: %s\n", eventCount, str);
              mon->Remove(s);
-             printf("Client %d: bytes recv = %d, bytes sent = %d\n", clientCount, s->GetBytesRecv(),
+             printf("Client %d: bytes recv = %d, bytes sent = %d\n", eventCount, s->GetBytesRecv(),
                     s->GetBytesSent());
              s->Close();
-             --clientCount;
-             if (mon->GetActive() == 0 && clientCount == 0) {
+             if (mon->GetActive() == 0 && eventCount >= EVENTS_PER_NODE) {
                 printf("No more active clients... stopping\n");
                 break;
              }
           } else if (mess->What() == kMESS_ANY) {
-
              Long64_t length;
              TString filename;
              Int_t clientId;
              mess->ReadInt(clientId);
-             string msg;
-             msg = "clientId: ";
-             msg += to_string(clientId);
-             yunsong::DEBUG_MSG(msg);
              mess->ReadTString(filename);
-             msg = "filename: ";
-             msg += filename;
-             yunsong::DEBUG_MSG(msg);
              mess->ReadLong64(length); // '*mess >> length;' is broken in CINT for Long64_t.
-             msg = "length: ";
-             msg += to_string(length);
-             yunsong::DEBUG_MSG(msg);
              
              BufferSizes sizes;
              sizes.name_length = filename.Length();
              sizes.data_length = length;
-
-             msg = "filename length: ";
-             msg += to_string(sizes.name_length);
-             yunsong::DEBUG_MSG(msg);
              
              MPI_Send(&sizes, 1, buffersizes_type, 0, TAG_REQUEST, MPI_COMM_WORLD);
              MasterIOStatus master_io_stat;
              MPI_Recv(&master_io_stat, 1, masterstat_type, 0, TAG_FEEDBACK, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-             msg = "Receive master IO status: ";
+             string msg = "Receive master IO status: ";
              if ( master_io_stat == MasterIOStatus::UNLOCKED)
                  msg += " UNLOCKED";
              else
@@ -219,10 +202,10 @@ int main(int argc, char** argv) {
              char *data_buffer = mess->Buffer() + mess->Length();
              MPI_Send(filename.Data(), sizes.name_length, MPI_CHAR, 0, TAG_DATA, MPI_COMM_WORLD);
              MPI_Send(data_buffer, sizes.data_length, MPI_CHAR, 0, TAG_DATA, MPI_COMM_WORLD);
-             yunsong::DEBUG_MSG("********* DATA SENT *********");
 
              mess->SetBufferOffset(mess->Length()+length);
              data_buffer = 0;
+             ++eventCount;
           } else if (mess->What() == kMESS_OBJECT) {
              printf("got object of class: %s\n", mess->GetClass()->GetName());
           } else {

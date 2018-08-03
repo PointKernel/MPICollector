@@ -14,6 +14,8 @@
 #include "TRandom.h"
 #include "TError.h"
 
+const int NUM_EVENTS = 10;
+
 using namespace std;
 
 void parallelMergeTest()
