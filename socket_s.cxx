@@ -12,8 +12,8 @@ const int TAG_DATA = 97;
 const int TAG_REQUEST = 98;
 const int TAG_FEEDBACK = 99;
 
-const int EVENTS_PER_NODE = 1;
-const int MAX_TOTAL = 60;
+const int EVENTS_PER_NODE = 5;
+const int MAX_TOTAL = 5;
 
 using namespace std;
 
@@ -41,7 +41,7 @@ int main(int argc, char** argv) {
         yunsong::DEBUG_MSG(msg);
 
         THashTable mergers;
-        MasterIO master_io(1);
+        MasterIO master_io(MAX_TOTAL);
 
         int clientId = 0;
 
@@ -88,13 +88,14 @@ int main(int argc, char** argv) {
 
                 info->InitialMerge(transient);
                 info->RegisterClient(clientId,transient);
-                Info("fastMergeServerHist","Merging input from %ld clients (%d)",info->fClients.size(),clientId);
+                Info("MergeServer","Merging input from %ld clients (%d)",info->fClients.size(),clientId);
                 info->Merge();
                 transient = 0;
                 ++clientId;
 
                 delete name;
                 delete data;
+                master_io.setMasterIOStatus(MasterIOStatus::UNLOCKED);
           }
        }    // while
        mergers.Delete();

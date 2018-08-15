@@ -180,10 +180,6 @@ struct ParallelFileMerger : public TObject
    ~ParallelFileMerger()
    {
       // Destructor.
-
-      for(unsigned int f = 0 ; f < fClients.size(); ++f) {
-         fprintf(stderr,"Client %d reported %u times\n",f,fClients[f].fContactsCount);
-      }
       for( ClientColl_t::iterator iter = fClients.begin();
           iter != fClients.end();
           ++iter)
