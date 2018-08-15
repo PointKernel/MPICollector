@@ -18,6 +18,14 @@ const int MAX_TOTAL = 5;
 using namespace std;
 
 int main(int argc, char** argv) {
+    if (argc < 3) {
+        cout << "EVENTS_PER_NODE and TOTAL_EVENTS not specified" << endl;
+        exit(1);
+    }  //otherwise continue on our merry way....
+             
+    const unsigned EVENTS_PER_NODE = atoi(argv[1]);
+    const unsigned MAX_TOTAL = atoi(argv[2]);
+    
     int nprocs, id;
     MPI_Init(&argc, &argv);
 
@@ -88,7 +96,7 @@ int main(int argc, char** argv) {
 
                 info->InitialMerge(transient);
                 info->RegisterClient(clientId,transient);
-                Info("MergeServer","Merging input from %ld clients (%d)",info->fClients.size(),clientId);
+                Info("MergeServer","Merging input from event %d",clientId);
                 info->Merge();
                 transient = 0;
                 ++clientId;
@@ -96,6 +104,7 @@ int main(int argc, char** argv) {
                 delete name;
                 delete data;
                 master_io.setMasterIOStatus(MasterIOStatus::UNLOCKED);
+                Info("MergeServer","Done");
           }
        }    // while
        mergers.Delete();
