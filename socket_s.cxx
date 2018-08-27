@@ -50,7 +50,7 @@ int main(int argc, char** argv) {
 
         THashTable mergers;
         MasterIO master_io(MAX_TOTAL);
-
+            
         int clientId = 0;
 
         Info("MASTER IO", "Ready to receive data...");
@@ -67,6 +67,7 @@ int main(int argc, char** argv) {
 
             Info("MASTER IO", "Send master IO status");
             MPI_Send(&master_io.getMasterIOStatus(), 1, masterstat_type, recv_status.MPI_SOURCE, TAG_FEEDBACK, MPI_COMM_WORLD);
+
             
             if (master_io.getMasterIOStatus() == MasterIOStatus::UNLOCKED) {
                 master_io.setMasterIOStatus(MasterIOStatus::LOCKED);
@@ -95,11 +96,11 @@ int main(int argc, char** argv) {
                 }
 
                 info->InitialMerge(transient);
-                info->RegisterClient(clientId,transient);
-                Info("MASTER IO", "Merging input from event %d",clientId);
+                info->RegisterClient(clientId, transient);
+                Info("MASTER IO", "Merging input from event %d", clientId);
                 info->Merge();
+                clientId++;
                 transient = 0;
-                ++clientId;
 
                 delete name;
                 delete data;
@@ -108,6 +109,7 @@ int main(int argc, char** argv) {
           }
        }    // while
        mergers.Delete();
+       Info("MASTER IO", "Done");
     }   // rank 0
     else {
        // Open a server socket looking for connections on a named service or
@@ -174,7 +176,6 @@ int main(int argc, char** argv) {
                     client->Send(kProtocolVersion, kProtocol);
                     ++eventIndex;
                     mon->Add(client);
-                    printf("######### Accept event %d #########\n",eventCount);
                  }
                  continue;
               }
@@ -186,13 +187,24 @@ int main(int argc, char** argv) {
               } else if (mess->What() == kMESS_STRING) {
                  char str[64];
                  mess->ReadString(str, 64);
-                 printf("Event %d: %s\n", eventCount, str);
+                 msg = "Event ";
+                 msg += to_string(eventCount);
+                 msg += ": ";
+                 msg += str;
+                 Info("ROOT RECEIVER", msg.c_str());
+
                  mon->Remove(s);
-                 printf("Client %d: bytes recv = %d, bytes sent = %d\n", eventCount, s->GetBytesRecv(),
-                        s->GetBytesSent());
+                 msg = "Event ";
+                 msg += to_string(eventCount);
+                 msg += ": bytes recv = ";
+                 msg += to_string(s->GetBytesRecv());
+                 msg += ", bytes sent = ";
+                 msg += to_string(s->GetBytesSent());
+                 Info("ROOT RECEIVER", msg.c_str());
+
                  s->Close();
-                 if (mon->GetActive() == 0 && eventCount >= EVENTS_PER_NODE) {
-                    printf("No more active clients... stopping\n");
+                 if (eventCount >= EVENTS_PER_NODE) {
+                    Info("ROOT RECEIVER", "No more active clients... stopping");
                     break;
                  }
               } else if (mess->What() == kMESS_ANY) {
@@ -237,16 +249,21 @@ int main(int argc, char** argv) {
                  data_buffer = 0;
                  ++eventCount;
               } else if (mess->What() == kMESS_OBJECT) {
-                 printf("got object of class: %s\n", mess->GetClass()->GetName());
-              } else {
-                 printf("*** Unexpected message ***\n");
-              }
+                 msg = "got object of class: ";
+                 msg += mess->GetClass()->GetName();
+                 Info("ROOT RECEIVER", msg.c_str());
+              } else
+                 Info("ROOT RECEIVER", "Unexpected message");
 
               delete mess;
            }    //while
            delete mon;
            delete ss;
+
+           Info("ROOT RECEIVER", "DONE");
         }   // else -- pid of root receiver
+
+        Info("OTHER RANKS", "DONE");
     }   // other ranks
 
    return 0;
