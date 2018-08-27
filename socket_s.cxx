@@ -2,7 +2,6 @@
 #include <algorithm>
 #include <random>
 
-#include "wys.hxx"
 #include "masterio.hxx"
 #include "ParallelFileMerger.hxx"
 
@@ -42,30 +41,31 @@ int main(int argc, char** argv) {
     MPI_Type_contiguous(sizeof(BufferSizes), MPI_BYTE, &buffersizes_type);
     MPI_Type_commit(&buffersizes_type);
 
+    // if master IO
     if ( id == 0 ) {
         bool cache = false;
-        string msg  = "I'm the master IO process: ";
+        string msg  = "pid: ";
         msg += to_string(getpid());
-        yunsong::DEBUG_MSG(msg);
+        Info("MASTER IO", msg.c_str());
 
         THashTable mergers;
         MasterIO master_io(MAX_TOTAL);
 
         int clientId = 0;
 
-        yunsong::DEBUG_MSG("MasterIO Ready to receive data...");
+        Info("MASTER IO", "Ready to receive data...");
         // Loop to collect data from all ipcwriters
         while ( master_io.getNum() < master_io.getTotal() ) {
             MPI_Status recv_status;
             BufferSizes sizes;
             MPI_Recv(&sizes, 1, buffersizes_type, MPI_ANY_SOURCE, TAG_REQUEST, MPI_COMM_WORLD, &recv_status);
-            msg = "Length of file name: ";
+            msg = "\nLength of file name: ";
             msg += to_string(sizes.name_length);
             msg += "\nLength of data: ";
             msg += to_string(sizes.data_length);
-            yunsong::DEBUG_MSG(msg);
+            Info("MASTER IO", msg.c_str());
 
-            yunsong::DEBUG_MSG("Send master IO status");
+            Info("MASTER IO", "Send master IO status");
             MPI_Send(&master_io.getMasterIOStatus(), 1, masterstat_type, recv_status.MPI_SOURCE, TAG_FEEDBACK, MPI_COMM_WORLD);
             
             if (master_io.getMasterIOStatus() == MasterIOStatus::UNLOCKED) {
@@ -96,7 +96,7 @@ int main(int argc, char** argv) {
 
                 info->InitialMerge(transient);
                 info->RegisterClient(clientId,transient);
-                Info("MergeServer","Merging input from event %d",clientId);
+                Info("MASTER IO", "Merging input from event %d",clientId);
                 info->Merge();
                 transient = 0;
                 ++clientId;
@@ -104,7 +104,7 @@ int main(int argc, char** argv) {
                 delete name;
                 delete data;
                 master_io.setMasterIOStatus(MasterIOStatus::UNLOCKED);
-                Info("MergeServer","Done");
+                Info("MergeServer", "Done");
           }
        }    // while
        mergers.Delete();
@@ -113,119 +113,140 @@ int main(int argc, char** argv) {
        // Open a server socket looking for connections on a named service or
        // on a specified port.
        //TServerSocket *ss = new TServerSocket("rootserv", kTRUE);
-       TServerSocket *ss = new TServerSocket(1095, kTRUE, 100);
-       if (!ss->IsValid()) {
-          return 1;
+       pid_t fpid = fork();
+
+       if (fpid == 0) {
+        string msg  = "pid: ";
+        msg += to_string(getpid());
+        Info("ROOT SENDER", msg.c_str());
+        sleep(10);
+        for (unsigned i = 0; i < EVENTS_PER_NODE; ++i) {
+            sleep(5);
+            system("root -q -b parallelMergeTest.C");
+        }
+        Info("parallelMergeTest", "DONE");
+        return 0;
        }
+       else {
+        string msg  = "pid: ";
+        msg += to_string(getpid());
+        Info("ROOT RECEIVER", msg.c_str());
 
-       TMonitor *mon = new TMonitor;
+           TServerSocket *ss = new TServerSocket(1095, kTRUE, 100);
+           if (!ss->IsValid()) {
+              return 1;
+           }
 
-       mon->Add(ss);
+           TMonitor *mon = new TMonitor;
 
-       UInt_t eventCount = 0;
-       UInt_t eventIndex = 0;
+           mon->Add(ss);
 
-       THashTable mergers;
+           UInt_t eventCount = 0;
+           UInt_t eventIndex = 0;
 
-       enum StatusKind {
-          kStartConnection = 0,
-          kProtocol = 1,
+           THashTable mergers;
 
-          kProtocolVersion = 1
-       };
+           enum StatusKind {
+              kStartConnection = 0,
+              kProtocol = 1,
 
-       printf("ParallelMergeServer ready to accept connections\n");
-       while (1) {
-           TMessage *mess;
-           TSocket  *s;
+              kProtocolVersion = 1
+           };
+           
+           Info("ROOT RECEIVER", "Ready to accept connections");
+           
+           while (1) {
+              TMessage *mess;
+              TSocket  *s;
 
-          // NOTE: this needs to be update to handle the case where the client
-          // dies.
-          s = mon->Select();
+              // NOTE: this needs to be update to handle the case where the client
+              // dies.
+              s = mon->Select();
 
-          if (s->IsA() == TServerSocket::Class()) {
-             if (eventCount >= EVENTS_PER_NODE) {
-                 Info("ParallelMergeServer","Only accept %d events per node", EVENTS_PER_NODE);
-                 mon->Remove(ss);
-                 ss->Close();
-             } else {
-                TSocket *client = ((TServerSocket *)s)->Accept();
-                client->Send(eventIndex, kStartConnection);
-                client->Send(kProtocolVersion, kProtocol);
-                ++eventIndex;
-                mon->Add(client);
-                printf("######### Accept event %d #########\n",eventCount);
-             }
-             continue;
-          }
+              if (s->IsA() == TServerSocket::Class()) {
+                 if (eventCount >= EVENTS_PER_NODE) {
+                     Info("ROOT RECEIVER", "Only accept %d events per node", EVENTS_PER_NODE);
+                     mon->Remove(ss);
+                     ss->Close();
+                 } else {
+                    TSocket *client = ((TServerSocket *)s)->Accept();
+                    client->Send(eventIndex, kStartConnection);
+                    client->Send(kProtocolVersion, kProtocol);
+                    ++eventIndex;
+                    mon->Add(client);
+                    printf("######### Accept event %d #########\n",eventCount);
+                 }
+                 continue;
+              }
 
-          s->Recv(mess);
+              s->Recv(mess);
 
-          if (mess==0) {
-             Error("ParallelMergeServer","The client did not send a message\n");
-          } else if (mess->What() == kMESS_STRING) {
-             char str[64];
-             mess->ReadString(str, 64);
-             printf("Event %d: %s\n", eventCount, str);
-             mon->Remove(s);
-             printf("Client %d: bytes recv = %d, bytes sent = %d\n", eventCount, s->GetBytesRecv(),
-                    s->GetBytesSent());
-             s->Close();
-             if (mon->GetActive() == 0 && eventCount >= EVENTS_PER_NODE) {
-                printf("No more active clients... stopping\n");
-                break;
-             }
-          } else if (mess->What() == kMESS_ANY) {
-             Long64_t length;
-             TString filename;
-             Int_t clientId;
-             mess->ReadInt(clientId);
-             mess->ReadTString(filename);
-             mess->ReadLong64(length); // '*mess >> length;' is broken in CINT for Long64_t.
-             
-             BufferSizes sizes;
-             sizes.name_length = filename.Length();
-             sizes.data_length = length;
-             
-             MPI_Send(&sizes, 1, buffersizes_type, 0, TAG_REQUEST, MPI_COMM_WORLD);
-             MasterIOStatus master_io_stat;
-             MPI_Recv(&master_io_stat, 1, masterstat_type, 0, TAG_FEEDBACK, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-             string msg = "Receive master IO status: ";
-             if ( master_io_stat == MasterIOStatus::UNLOCKED)
-                 msg += " UNLOCKED";
-             else
-                 msg += "LOCKED";
-             yunsong::DEBUG_MSG(msg);
-             
-             while(master_io_stat != MasterIOStatus::UNLOCKED){
-                 usleep(10);
+              if (mess==0) {
+                 Error("ParallelMergeServer","The client did not send a message\n");
+              } else if (mess->What() == kMESS_STRING) {
+                 char str[64];
+                 mess->ReadString(str, 64);
+                 printf("Event %d: %s\n", eventCount, str);
+                 mon->Remove(s);
+                 printf("Client %d: bytes recv = %d, bytes sent = %d\n", eventCount, s->GetBytesRecv(),
+                        s->GetBytesSent());
+                 s->Close();
+                 if (mon->GetActive() == 0 && eventCount >= EVENTS_PER_NODE) {
+                    printf("No more active clients... stopping\n");
+                    break;
+                 }
+              } else if (mess->What() == kMESS_ANY) {
+                 Long64_t length;
+                 TString filename;
+                 Int_t clientId;
+                 mess->ReadInt(clientId);
+                 mess->ReadTString(filename);
+                 mess->ReadLong64(length); // '*mess >> length;' is broken in CINT for Long64_t.
+                 
+                 BufferSizes sizes;
+                 sizes.name_length = filename.Length();
+                 sizes.data_length = length;
+                 
                  MPI_Send(&sizes, 1, buffersizes_type, 0, TAG_REQUEST, MPI_COMM_WORLD);
-                 yunsong::DEBUG_MSG("Waiting for status...");
+                 MasterIOStatus master_io_stat;
                  MPI_Recv(&master_io_stat, 1, masterstat_type, 0, TAG_FEEDBACK, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                 msg = "Receive master IO status: ";
-                 if (master_io_stat == MasterIOStatus::UNLOCKED)
+                 string msg = "Receive master IO status: ";
+                 if ( master_io_stat == MasterIOStatus::UNLOCKED)
                      msg += " UNLOCKED";
                  else
                      msg += "LOCKED";
-                 yunsong::DEBUG_MSG(msg);
-             }
-             char *data_buffer = mess->Buffer() + mess->Length();
-             MPI_Send(filename.Data(), sizes.name_length, MPI_CHAR, 0, TAG_DATA, MPI_COMM_WORLD);
-             MPI_Send(data_buffer, sizes.data_length, MPI_CHAR, 0, TAG_DATA, MPI_COMM_WORLD);
+                 Info("MPI SENDER", msg.c_str());
+                 
+                 while(master_io_stat != MasterIOStatus::UNLOCKED){
+                     usleep(10);
+                     MPI_Send(&sizes, 1, buffersizes_type, 0, TAG_REQUEST, MPI_COMM_WORLD);
+                     Info("MPI SENDER", "Waiting for status...");
+                     MPI_Recv(&master_io_stat, 1, masterstat_type, 0, TAG_FEEDBACK, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                     msg = "Receive master IO status: ";
+                     if (master_io_stat == MasterIOStatus::UNLOCKED)
+                         msg += " UNLOCKED";
+                     else
+                         msg += "LOCKED";
+                     Info("MPI SENDER", msg.c_str());
+                 }
+                 char *data_buffer = mess->Buffer() + mess->Length();
+                 MPI_Send(filename.Data(), sizes.name_length, MPI_CHAR, 0, TAG_DATA, MPI_COMM_WORLD);
+                 MPI_Send(data_buffer, sizes.data_length, MPI_CHAR, 0, TAG_DATA, MPI_COMM_WORLD);
 
-             mess->SetBufferOffset(mess->Length()+length);
-             data_buffer = 0;
-             ++eventCount;
-          } else if (mess->What() == kMESS_OBJECT) {
-             printf("got object of class: %s\n", mess->GetClass()->GetName());
-          } else {
-             printf("*** Unexpected message ***\n");
-          }
+                 mess->SetBufferOffset(mess->Length()+length);
+                 data_buffer = 0;
+                 ++eventCount;
+              } else if (mess->What() == kMESS_OBJECT) {
+                 printf("got object of class: %s\n", mess->GetClass()->GetName());
+              } else {
+                 printf("*** Unexpected message ***\n");
+              }
 
-          delete mess;
-       }    //while
-       delete mon;
-       delete ss;
+              delete mess;
+           }    //while
+           delete mon;
+           delete ss;
+        }   // else -- pid of root receiver
     }   // other ranks
 
    return 0;
