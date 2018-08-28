@@ -48,7 +48,7 @@ int main(int argc, char** argv) {
         const char * rankID = name.c_str();
 
         bool cache = false;
-        string msg  = "pid: ";
+        string msg  = "PID ";
         msg += to_string(getpid());
         Info(rankID, msg.c_str());
 
@@ -127,7 +127,6 @@ int main(int argc, char** argv) {
             string msg  = "PID ";
             msg += to_string(getpid());
             Info(rankID, msg.c_str());
-            sleep(10);
             for (unsigned i = 0; i < EVENTS_PER_NODE; ++i) {
                 sleep(5);
                 system("root -q -b parallelMergeTest.C");
@@ -209,7 +208,8 @@ int main(int argc, char** argv) {
                     Info(rankID, msg.c_str());
                     s->Close();
                     
-                    if (eventCount >= EVENTS_PER_NODE) {
+                    if (mon->GetActive() == 0 && eventCount >= EVENTS_PER_NODE) {
+                    //if (eventCount >= EVENTS_PER_NODE) {
                         Info(rankID, "No more active clients... stopping");
                         break;
                     }
