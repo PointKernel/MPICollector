@@ -1,5 +1,5 @@
 CXX = mpic++
-CXXFLAGS = -std=c++11 -Wall -Wextra -pedantic-errors -lpthread -lm -lrt -ltbb
+CXXFLAGS = -std=c++11 -Wall -Wextra -pedantic-errors -lpthread -lm -lrt
 CPPFLAGS = -I$(ROOTSYS)/include `root-config --libs --cflags` -I..
 
 socket_s: socket_s.cxx ParallelFileMerger.hxx masterio.hxx

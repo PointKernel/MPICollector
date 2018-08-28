@@ -43,17 +43,21 @@ int main(int argc, char** argv) {
 
     // if master IO
     if ( id == 0 ) {
+        string name = "MASTER IO: ";
+        name += to_string(id);
+        const char * rankID = name.c_str();
+
         bool cache = false;
         string msg  = "pid: ";
         msg += to_string(getpid());
-        Info("MASTER IO", msg.c_str());
+        Info(rankID, msg.c_str());
 
         THashTable mergers;
         MasterIO master_io(MAX_TOTAL);
             
         int clientId = 0;
 
-        Info("MASTER IO", "Ready to receive data...");
+        Info(rankID, "Ready to receive data...");
         // Loop to collect data from all ipcwriters
         while ( master_io.getNum() < master_io.getTotal() ) {
             MPI_Status recv_status;
@@ -63,9 +67,9 @@ int main(int argc, char** argv) {
             msg += to_string(sizes.name_length);
             msg += "\nLength of data: ";
             msg += to_string(sizes.data_length);
-            Info("MASTER IO", msg.c_str());
+            Info(rankID, msg.c_str());
 
-            Info("MASTER IO", "Send master IO status");
+            Info(rankID, "Send master IO status");
             MPI_Send(&master_io.getMasterIOStatus(), 1, masterstat_type, recv_status.MPI_SOURCE, TAG_FEEDBACK, MPI_COMM_WORLD);
 
             
@@ -97,7 +101,7 @@ int main(int argc, char** argv) {
 
                 info->InitialMerge(transient);
                 info->RegisterClient(clientId, transient);
-                Info("MASTER IO", "Merging input from event %d", clientId);
+                Info(rankID, "Merging input from event %d", clientId);
                 info->Merge();
                 clientId++;
                 transient = 0;
@@ -105,165 +109,177 @@ int main(int argc, char** argv) {
                 delete name;
                 delete data;
                 master_io.setMasterIOStatus(MasterIOStatus::UNLOCKED);
-                Info("MergeServer", "Done");
+                Info(rankID, "Merge done");
           }
        }    // while
        mergers.Delete();
-       Info("MASTER IO", "Done");
+       Info(rankID, "ALL DONE");
     }   // rank 0
     else {
-       // Open a server socket looking for connections on a named service or
-       // on a specified port.
-       //TServerSocket *ss = new TServerSocket("rootserv", kTRUE);
-       pid_t fpid = fork();
 
-       if (fpid == 0) {
-        string msg  = "pid: ";
-        msg += to_string(getpid());
-        Info("ROOT SENDER", msg.c_str());
-        sleep(10);
-        for (unsigned i = 0; i < EVENTS_PER_NODE; ++i) {
-            sleep(5);
-            system("root -q -b parallelMergeTest.C");
+        pid_t fpid = fork();
+
+        if (fpid == 0) {
+            string name = "ROOT SENDER: ";
+            name += to_string(id);
+            const char * rankID = name.c_str();
+
+            string msg  = "PID ";
+            msg += to_string(getpid());
+            Info(rankID, msg.c_str());
+            sleep(10);
+            for (unsigned i = 0; i < EVENTS_PER_NODE; ++i) {
+                sleep(5);
+                system("root -q -b parallelMergeTest.C");
+            }
+            Info(rankID, "ALL DONE");
+            return 0;
         }
-        Info("parallelMergeTest", "DONE");
-        return 0;
-       }
-       else {
-        string msg  = "pid: ";
-        msg += to_string(getpid());
-        Info("ROOT RECEIVER", msg.c_str());
+        else {
+            string name = "ROOT RECEIVER: ";
+            name += to_string(id);
+            const char * rankID = name.c_str();
 
-           TServerSocket *ss = new TServerSocket(1095, kTRUE, 100);
-           if (!ss->IsValid()) {
-              return 1;
-           }
+            string msg  = "PID ";
+            msg += to_string(getpid());
+            Info(rankID, msg.c_str());
+            
+            TServerSocket *ss = new TServerSocket(1095, kTRUE, 100);
+            
+            if (!ss->IsValid())
+                return 1;
 
-           TMonitor *mon = new TMonitor;
+            TMonitor *mon = new TMonitor;
 
-           mon->Add(ss);
+            mon->Add(ss);
 
-           UInt_t eventCount = 0;
-           UInt_t eventIndex = 0;
+            UInt_t eventCount = 0;
+            UInt_t eventIndex = 0;
 
-           THashTable mergers;
+            THashTable mergers;
 
-           enum StatusKind {
-              kStartConnection = 0,
-              kProtocol = 1,
-
-              kProtocolVersion = 1
-           };
+            enum StatusKind {
+                kStartConnection = 0,
+                kProtocol = 1,
+                kProtocolVersion = 1
+            };
+            Info(rankID, "Ready to accept connections");
            
-           Info("ROOT RECEIVER", "Ready to accept connections");
-           
-           while (1) {
-              TMessage *mess;
-              TSocket  *s;
+            while (1) {
+                TMessage *mess;
+                TSocket  *s;
+                
+                s = mon->Select();
 
-              // NOTE: this needs to be update to handle the case where the client
-              // dies.
-              s = mon->Select();
+                if (s->IsA() == TServerSocket::Class()) {
+                    if (eventCount >= EVENTS_PER_NODE) {
+                        Info(rankID, "Only accept %d events per node", EVENTS_PER_NODE);
+                        mon->Remove(ss);
+                        ss->Close();
+                    } else {
+                        TSocket *client = ((TServerSocket *)s)->Accept();
+                        client->Send(eventIndex, kStartConnection);
+                        client->Send(kProtocolVersion, kProtocol);
+                        ++eventIndex;
+                        mon->Add(client);
+                    }
+                    continue;
+                }
 
-              if (s->IsA() == TServerSocket::Class()) {
-                 if (eventCount >= EVENTS_PER_NODE) {
-                     Info("ROOT RECEIVER", "Only accept %d events per node", EVENTS_PER_NODE);
-                     mon->Remove(ss);
-                     ss->Close();
-                 } else {
-                    TSocket *client = ((TServerSocket *)s)->Accept();
-                    client->Send(eventIndex, kStartConnection);
-                    client->Send(kProtocolVersion, kProtocol);
-                    ++eventIndex;
-                    mon->Add(client);
-                 }
-                 continue;
-              }
+                s->Recv(mess);
 
-              s->Recv(mess);
+                if (mess==0)
+                    Error(rankID, "The client did not send a message\n");
+                else if (mess->What() == kMESS_STRING) {
+                    char str[64];
+                    mess->ReadString(str, 64);
+                    msg = "Event ";
+                    msg += to_string(eventCount);
+                    msg += ": ";
+                    msg += str;
+                    Info(rankID, msg.c_str());
 
-              if (mess==0) {
-                 Error("ParallelMergeServer","The client did not send a message\n");
-              } else if (mess->What() == kMESS_STRING) {
-                 char str[64];
-                 mess->ReadString(str, 64);
-                 msg = "Event ";
-                 msg += to_string(eventCount);
-                 msg += ": ";
-                 msg += str;
-                 Info("ROOT RECEIVER", msg.c_str());
-
-                 mon->Remove(s);
-                 msg = "Event ";
-                 msg += to_string(eventCount);
-                 msg += ": bytes recv = ";
-                 msg += to_string(s->GetBytesRecv());
-                 msg += ", bytes sent = ";
-                 msg += to_string(s->GetBytesSent());
-                 Info("ROOT RECEIVER", msg.c_str());
-
-                 s->Close();
-                 if (eventCount >= EVENTS_PER_NODE) {
-                    Info("ROOT RECEIVER", "No more active clients... stopping");
-                    break;
-                 }
-              } else if (mess->What() == kMESS_ANY) {
-                 Long64_t length;
-                 TString filename;
-                 Int_t clientId;
-                 mess->ReadInt(clientId);
-                 mess->ReadTString(filename);
-                 mess->ReadLong64(length); // '*mess >> length;' is broken in CINT for Long64_t.
+                    mon->Remove(s);
+                    msg = "Event ";
+                    msg += to_string(eventCount);
+                    msg += ": bytes recv = ";
+                    msg += to_string(s->GetBytesRecv());
+                    msg += ", bytes sent = ";
+                    msg += to_string(s->GetBytesSent());
+                    Info(rankID, msg.c_str());
+                    s->Close();
+                    
+                    if (eventCount >= EVENTS_PER_NODE) {
+                        Info(rankID, "No more active clients... stopping");
+                        break;
+                    }
+                } else if (mess->What() == kMESS_ANY) {
+                    Long64_t length;
+                    TString filename;
+                    Int_t clientId;
+                    mess->ReadInt(clientId);
+                    mess->ReadTString(filename);
+                    mess->ReadLong64(length); // '*mess >> length;' is broken in CINT for Long64_t.
+                    
+                    auto start = std::chrono::high_resolution_clock::now();
+                    
+                    BufferSizes sizes;
+                    sizes.name_length = filename.Length();
+                    sizes.data_length = length;
                  
-                 BufferSizes sizes;
-                 sizes.name_length = filename.Length();
-                 sizes.data_length = length;
+                    MPI_Send(&sizes, 1, buffersizes_type, 0, TAG_REQUEST, MPI_COMM_WORLD);
+                    MasterIOStatus master_io_stat;
+                    MPI_Recv(&master_io_stat, 1, masterstat_type, 0, TAG_FEEDBACK, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                    string msg = "Receive master IO status: ";
+                    if ( master_io_stat == MasterIOStatus::UNLOCKED)
+                        msg += " UNLOCKED";
+                    else
+                        msg += "LOCKED";
+                    Info(rankID, msg.c_str());
                  
-                 MPI_Send(&sizes, 1, buffersizes_type, 0, TAG_REQUEST, MPI_COMM_WORLD);
-                 MasterIOStatus master_io_stat;
-                 MPI_Recv(&master_io_stat, 1, masterstat_type, 0, TAG_FEEDBACK, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                 string msg = "Receive master IO status: ";
-                 if ( master_io_stat == MasterIOStatus::UNLOCKED)
-                     msg += " UNLOCKED";
-                 else
-                     msg += "LOCKED";
-                 Info("MPI SENDER", msg.c_str());
-                 
-                 while(master_io_stat != MasterIOStatus::UNLOCKED){
-                     usleep(10);
-                     MPI_Send(&sizes, 1, buffersizes_type, 0, TAG_REQUEST, MPI_COMM_WORLD);
-                     Info("MPI SENDER", "Waiting for status...");
-                     MPI_Recv(&master_io_stat, 1, masterstat_type, 0, TAG_FEEDBACK, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                     msg = "Receive master IO status: ";
-                     if (master_io_stat == MasterIOStatus::UNLOCKED)
-                         msg += " UNLOCKED";
-                     else
-                         msg += "LOCKED";
-                     Info("MPI SENDER", msg.c_str());
-                 }
-                 char *data_buffer = mess->Buffer() + mess->Length();
-                 MPI_Send(filename.Data(), sizes.name_length, MPI_CHAR, 0, TAG_DATA, MPI_COMM_WORLD);
-                 MPI_Send(data_buffer, sizes.data_length, MPI_CHAR, 0, TAG_DATA, MPI_COMM_WORLD);
+                    while(master_io_stat != MasterIOStatus::UNLOCKED){
+                        usleep(10);
+                        MPI_Send(&sizes, 1, buffersizes_type, 0, TAG_REQUEST, MPI_COMM_WORLD);
+                        Info(rankID, "Waiting for master IO status...");
+                        MPI_Recv(&master_io_stat, 1, masterstat_type, 0, TAG_FEEDBACK, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                        msg = "Receive master IO status: ";
+                        if (master_io_stat == MasterIOStatus::UNLOCKED)
+                            msg += " UNLOCKED";
+                        else
+                            msg += "LOCKED";
+                        Info(rankID, msg.c_str());
+                    }
+                    char *data_buffer = mess->Buffer() + mess->Length();
+                    MPI_Send(filename.Data(), sizes.name_length, MPI_CHAR, 0, TAG_DATA, MPI_COMM_WORLD);
+                    MPI_Send(data_buffer, sizes.data_length, MPI_CHAR, 0, TAG_DATA, MPI_COMM_WORLD);
 
-                 mess->SetBufferOffset(mess->Length()+length);
-                 data_buffer = 0;
-                 ++eventCount;
-              } else if (mess->What() == kMESS_OBJECT) {
-                 msg = "got object of class: ";
-                 msg += mess->GetClass()->GetName();
-                 Info("ROOT RECEIVER", msg.c_str());
-              } else
-                 Info("ROOT RECEIVER", "Unexpected message");
+                    mess->SetBufferOffset(mess->Length()+length);
+                    data_buffer = 0;
+                    ++eventCount;
+                    
+                    auto end = std::chrono::high_resolution_clock::now();
+                    double time = std::chrono::duration_cast<std::chrono::duration<double>> (end - start).count();
+                    msg = "Data transfer overhead: ";
+                    msg += to_string(time);
+                    Info(rankID, msg.c_str());
 
-              delete mess;
-           }    //while
-           delete mon;
-           delete ss;
+                } else if (mess->What() == kMESS_OBJECT) {
+                    msg = "got object of class: ";
+                    msg += mess->GetClass()->GetName();
+                    Info(rankID, msg.c_str());
+                } else
+                    Info(rankID, "Unexpected message");
 
-           Info("ROOT RECEIVER", "DONE");
+                delete mess;
+            }    //while
+            
+            delete mon;
+            delete ss;
+            
+            Info(rankID, "ALL DONE");
         }   // else -- pid of root receiver
 
-        Info("OTHER RANKS", "DONE");
+        Info("OTHER RANKS", "ALL DONE");
     }   // other ranks
 
    return 0;
