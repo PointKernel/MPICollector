@@ -128,7 +128,15 @@ int main(int argc, char** argv) {
             msg += to_string(getpid());
             Info(rankID, msg.c_str());
             for (unsigned i = 0; i < EVENTS_PER_NODE; ++i) {
-                sleep(5);
+                // Give the array a random size
+                // & fill it with random numbers
+                std::random_device rd;
+                std::mt19937 mt(rd());
+
+                // The size of each event's output data is between 2 and 3 MB
+                std::uniform_real_distribution<double> dist(180.0, 300.0);
+                int time = (int) dist(mt);
+                sleep(time);
                 system("root -q -b parallelMergeTest.C");
             }
             Info(rankID, "ALL DONE");
@@ -152,7 +160,6 @@ int main(int argc, char** argv) {
 
             mon->Add(ss);
 
-            UInt_t eventCount = 0;
             UInt_t eventIndex = 0;
 
             THashTable mergers;
@@ -171,7 +178,7 @@ int main(int argc, char** argv) {
                 s = mon->Select();
 
                 if (s->IsA() == TServerSocket::Class()) {
-                    if (eventCount >= EVENTS_PER_NODE) {
+                    if (eventIndex >= EVENTS_PER_NODE) {
                         Info(rankID, "Only accept %d events per node", EVENTS_PER_NODE);
                         mon->Remove(ss);
                         ss->Close();
@@ -193,14 +200,14 @@ int main(int argc, char** argv) {
                     char str[64];
                     mess->ReadString(str, 64);
                     msg = "Event ";
-                    msg += to_string(eventCount);
+                    msg += to_string(eventIndex);
                     msg += ": ";
                     msg += str;
                     Info(rankID, msg.c_str());
 
                     mon->Remove(s);
                     msg = "Event ";
-                    msg += to_string(eventCount);
+                    msg += to_string(eventIndex);
                     msg += ": bytes recv = ";
                     msg += to_string(s->GetBytesRecv());
                     msg += ", bytes sent = ";
@@ -208,8 +215,8 @@ int main(int argc, char** argv) {
                     Info(rankID, msg.c_str());
                     s->Close();
                     
-                    if (mon->GetActive() == 0 && eventCount >= EVENTS_PER_NODE) {
-                    //if (eventCount >= EVENTS_PER_NODE) {
+                    if (mon->GetActive() == 0 || eventIndex >= EVENTS_PER_NODE) {
+                    //if (eventIndex >= EVENTS_PER_NODE) {
                         Info(rankID, "No more active clients... stopping");
                         break;
                     }
@@ -255,7 +262,6 @@ int main(int argc, char** argv) {
 
                     mess->SetBufferOffset(mess->Length()+length);
                     data_buffer = 0;
-                    ++eventCount;
                     
                     auto end = std::chrono::high_resolution_clock::now();
                     double time = std::chrono::duration_cast<std::chrono::duration<double>> (end - start).count();

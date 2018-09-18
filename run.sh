@@ -3,7 +3,7 @@
 #SBATCH -C haswell
 #SBATCH -q regular
 #SBATCH -J mpi_io
-#SBATCH -t 00:10:00
+#SBATCH -t 00:30:00
 
 #OpenMP settings:
 export OMP_NUM_THREADS=1
