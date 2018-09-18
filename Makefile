@@ -29,3 +29,4 @@ clean:
 	-rm -rf bin;
 	-rm MyDict*;
 	-rm *.o
+	-rm *.root
