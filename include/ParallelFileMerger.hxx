@@ -30,32 +30,6 @@ const int kReplaceWait = 2;
 #include "TKey.h"
 #include "TROOT.h"
 
-static Bool_t R__NeedInitialMerge(TDirectory *dir)
-{
-
-   if (dir==0) return kFALSE;
-
-   TIter nextkey(dir->GetListOfKeys());
-   TKey *key;
-   while( (key = (TKey*)nextkey()) ) {
-      TClass *cl = TClass::GetClass(key->GetClassName());
-      if (cl->InheritsFrom(TDirectory::Class())) {
-         TDirectory *subdir = (TDirectory *)dir->GetList()->FindObject(key->GetName());
-         if (!subdir) {
-            subdir = (TDirectory *)key->ReadObj();
-         }
-         if (R__NeedInitialMerge(subdir)) {
-            return kTRUE;
-         }
-      } else {
-         if (0 != cl->GetResetAfterMerge()) {
-            return kTRUE;
-         }
-      }
-   }
-   return kFALSE;
-}
-
 static void R__DeleteObject(TDirectory *dir, Bool_t withReset)
 {
    if (dir==0) return;
@@ -270,16 +244,9 @@ struct ParallelFileMerger : public TObject
       Double_t sigma = sum2 ? TMath::Sqrt( sum2 / fClients.size() - avg*avg) : 0;
       Double_t target = avg + 2*sigma;
       TTimeStamp now;
-      if ( (now.AsDouble() - fLastMerge.AsDouble()) > target) {
-//         Float_t cut = clientThreshold * fClients.size();
-//         if (!(fClientsContact.CountBits() > cut )) {
-//            for(unsigned int c = 0 ; c < fClients.size(); ++c) {
-//               fprintf(stderr,"%d:%f ",c,fClients[c].fTimeSincePrevContact);
-//            }
-//            fprintf(stderr,"merge:%f avg:%f target:%f\n",(now.AsDouble() - fLastMerge.AsDouble()),avg,target);
-//         }
+      if ( (now.AsDouble() - fLastMerge.AsDouble()) > target)
          return kTRUE;
-      }
+      
       Float_t cut = clientThreshold * fClients.size();
       return fClientsContact.CountBits() > cut  || fNClientsContact > 2*cut;
    }
