@@ -1,9 +1,31 @@
 CXX = mpic++
-CXXFLAGS = -std=c++11 -Wall -Wextra -pedantic-errors -lpthread -lm -lrt -ltbb
-CPPFLAGS = -I$(ROOTSYS)/include `root-config --libs --cflags` -I..
+PROG = test
+CXXFLAGS = -std=c++1y -Wall -Wextra -pedantic-errors -lpthread -lm -lrt -fPIC -O2 -g #-ltbb
+ROOTLIBS = $(shell root-config --libs)
+LOCALLIB = -L$(shell pwd)/lib
+INCLUDES = -I$(shell root-config --incdir) -I./include
+HEADERS = $(shell pwd)/include/ParallelFileMerger.hxx
 
-socket_s: socket_s.cxx ParallelFileMerger.hxx masterio.hxx
-	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -o socket_s socket_s.cxx ParallelFileMerger_hxx.so
+all: lib $(PROG)
 
-clean:
-	rm -f socket_s *.log ParallelFileMerger_hxx* toto.*
+lib: libParallelFileMerger.so
+
+libParallelFileMerger.so: MyDict.cxx
+	if [ ! -d lib ]; then mkdir -p lib; fi
+	$(CXX) -shared -o lib/$@ -fPIC $(INCLUDES) $^
+
+MyDict.cxx: $(HEADERS) include/Linkdef.h
+	rootcint -f $@ -c -p $^
+
+$(PROG): % : %.o libParallelFileMerger.so
+	if [ ! -d bin ]; then mkdir -p bin; fi
+	$(CXX) -o bin/$@ $< $(ROOTLIBS) $(LOCALLIB) -lParallelFileMerger
+
+%.o: %.cxx
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c -o $@ $<
+
+clean: 
+	-rm -rf lib;
+	-rm -rf bin;
+	-rm MyDict*;
+	-rm *.o

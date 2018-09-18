@@ -137,7 +137,7 @@ int main(int argc, char** argv) {
                 std::uniform_real_distribution<double> dist(180.0, 300.0);
                 int time = (int) dist(mt);
                 sleep(time);
-                system("root -q -b parallelMergeTest.C");
+                system("root -q -b ../parallelMergeTest.C");
             }
             Info(rankID, "ALL DONE");
             return 0;
